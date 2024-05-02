@@ -20,7 +20,7 @@ import scala.util.{Failure, Success, Try}
 
 case class DistributionValue(absolute: Long, ratio: Double)
 
-case class Distribution(values: Map[String, DistributionValue], numberOfBins: Long) {
+case class Distribution(values: Map[String, DistributionValue], numberOfBins: Long, splits: Option[Seq[Any]] = None) {
 
   def apply(key: String): DistributionValue = {
     values(key)

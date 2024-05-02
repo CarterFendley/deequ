@@ -314,6 +314,37 @@ class AnalyzerTests extends AnyWordSpec with Matchers with SparkContextSpec with
 
       }
     }
+
+    "compute correct metrics after splits if provided" in withSparkSession { sparkSession =>
+      val dfFull = getDfWithNumericFractionalValues(sparkSession)
+      val splits = Seq(
+        Double.NegativeInfinity,
+        3.0,
+        5.0,
+        Double.PositiveInfinity
+      )
+      val histogram = Histogram(
+        "att1",
+        splits = Some(splits)
+      ).calculate(dfFull)
+
+      assert(histogram.value.isSuccess)
+
+      histogram.value.get match {
+          case hv =>
+            assert(hv.numberOfBins == 3)
+            assert(hv.splits == Some(splits))
+            assert(hv.values.keys == Set(
+              "-Infinity <= x < 3.0",
+              "3.0 <= x < 5.0",
+              "5.0 <= x <= Infinity"
+            ))
+            assert(hv("-Infinity <= x < 3.0").absolute == 2)
+            assert(hv("3.0 <= x < 5.0").absolute == 2)
+            assert(hv("5.0 <= x <= Infinity").absolute == 2)
+      }
+    }
+
     "compute correct metrics should only get top N bins" in withSparkSession { sparkSession =>
       val dfFull = getDfMissing(sparkSession)
       val histogram = Histogram("att1", None, 2).calculate(dfFull)

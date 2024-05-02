@@ -20,9 +20,9 @@ import com.amazon.deequ.analyzers.Histogram.{AggregateFunction, Count}
 import com.amazon.deequ.analyzers.runners.{IllegalAnalyzerParameterException, MetricCalculationException}
 import com.amazon.deequ.metrics.{Distribution, DistributionValue, HistogramMetric}
 import org.apache.spark.sql.expressions.UserDefinedFunction
-import org.apache.spark.sql.functions.{col, sum}
+import org.apache.spark.sql.functions.{col, sum, when}
 import org.apache.spark.sql.types.{DoubleType, LongType, StringType, StructType}
-import org.apache.spark.sql.{DataFrame, Row}
+import org.apache.spark.sql.{DataFrame, Row, Column}
 
 import scala.util.{Failure, Try}
 
@@ -41,6 +41,11 @@ import scala.util.{Failure, Try}
   *                      This limit does not affect what is being returned as number of bins. It
   *                      always returns the dictinct value count.
   * @param aggregateFunction function that implements aggregation logic.
+  * @param splits        Split points for mapping column values into bins. With n+1 splits, there
+  *                      are n buckets. A bin defined by splits x,y holds values in the range [x,y)
+  *                      except for the last bucket which includes y. Values at `-inf` and `inf`
+  *                      must be explicitly provided to cover all numberical values, othewise values
+  *                      outside the splits specified will be ignored.
   */
 case class Histogram(
     column: String,
@@ -48,7 +53,8 @@ case class Histogram(
     maxDetailBins: Integer = Histogram.MaximumAllowedDetailBins,
     where: Option[String] = None,
     computeFrequenciesAsRatio: Boolean = true,
-    aggregateFunction: AggregateFunction = Count)
+    aggregateFunction: AggregateFunction = Count,
+    splits: Option[Seq[Any]] = None)
   extends Analyzer[FrequenciesAndNumRows, HistogramMetric]
   with FilterableAnalyzer {
 
@@ -56,6 +62,20 @@ case class Histogram(
     if (maxDetailBins > Histogram.MaximumAllowedDetailBins) {
       throw new IllegalAnalyzerParameterException(s"Cannot return histogram values for more " +
         s"than ${Histogram.MaximumAllowedDetailBins} values")
+    }
+
+    splits match {
+        case Some(seq) =>
+          if (seq.length < 3) {
+              throw new IllegalAnalyzerParameterException("When using splits, you must provide " +
+                "at least 3 split points.")
+          }
+        case _ => None
+    }
+
+    if (splits != None && binningUdf != None) {
+        throw new IllegalAnalyzerParameterException("Histogram parameters 'splits' and 'binningUdf' " +
+          "are mututally exclusive, please select one.")
     }
   }
 
@@ -72,6 +92,7 @@ case class Histogram(
     val df = data
       .transform(filterOptional(where))
       .transform(binOptional(binningUdf))
+      .transform(splitsOptional(splits))
     val frequencies = query(df)
 
     Some(FrequenciesAndNumRows(frequencies, totalCount))
@@ -94,7 +115,8 @@ case class Histogram(
             }
             .toMap
 
-          Distribution(histogramDetails, binCount)
+          // TODO: How to reconcile previous states which were produced by different splits
+          Distribution(histogramDetails, binCount, splits)
         }
 
         HistogramMetric(column, value)
@@ -126,6 +148,38 @@ case class Histogram(
       case Some(bin) => data.withColumn(column, bin(col(column)))
       case _ => data
     }
+  }
+
+  private def splitsOptional(splits: Option[Seq[Any]])(data: DataFrame): DataFrame = {
+      splits match {
+          case Some(seq) =>
+            // Initialize with the lowest bucket
+            var conditional = when(
+              (col(column) >= seq(0))
+              && (col(column) < seq(1)),
+              s"${seq(0)} <= x < ${seq(1)}"
+            )
+
+            // Add condition for every itemediate bucket
+            conditional = seq.slice(1, seq.length - 1).sliding(2, 1)
+              .foldLeft(conditional) { case (conditional, Seq(lower, upper)) =>
+              conditional.when(
+                (col(column) >= lower)
+                && (col(column) < upper),
+                s"${lower} <= x < ${upper}"
+              )
+            }
+
+            // Add final bucket
+            conditional = conditional.when(
+              (col(column) >= seq(seq.length - 2))
+              && (col(column) <= seq(seq.length - 1)), // Note eq
+              s"${seq(seq.length - 2)} <= x <= ${seq(seq.length - 1)}"
+            ).otherwise(null)
+
+            data.withColumn(column, conditional).filter(col(column).isNotNull) // Items outside the bounds are ignored
+          case _ => data
+      }
   }
 
   private def query(data: DataFrame): DataFrame = {
