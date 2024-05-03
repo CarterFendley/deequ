@@ -49,6 +49,22 @@ case class BucketDistribution(
   }
 
   /**
+   * Get a list of splits which can be used with HistogramAnalyzer
+   * @param unboundedEdges If the lowest and highest bounds should be replaced with -inf and inf respectively
+   * @return A seq of splits
+   */
+  def getSplits(unboundedEdges: Boolean = false): Seq[Double] = {
+    var splits = buckets.map(b => b.lowValue).toSeq
+    // Make sure to get final bound
+    splits = splits :+ buckets.last.highValue
+
+    if (unboundedEdges) {
+      splits = Double.NegativeInfinity +: splits.tail.init :+ Double.PositiveInfinity
+    }
+    splits
+  }
+
+  /**
    * Find the index of bucket which contains the most items.
    * @return The index of bucket which contains the most items.
    */

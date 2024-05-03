@@ -32,6 +32,27 @@ case class Distribution(values: Map[String, DistributionValue], numberOfBins: Lo
 
     distributionKey
   }
+
+  /**
+   * Convert the Distribution to a sequence of BucketValue objects which are used by KLL and distance tooling
+   *
+   * NOTE: This only whorks when the Histogram has been calculated given a 'splits' list.
+   *
+   * @returns A sequence of BucketValue objects
+   */
+  def toBucketValues: Seq[BucketValue] = {
+    splits match {
+      case Some(splits: Seq[Double]) =>
+        var counts = values.map { case (key, value) => value.absolute }
+        var bounds: Seq[Seq[Double]] = splits.sliding(2, 1).toSeq
+
+        (bounds zip counts).map { case (Seq(lower, upper), count) =>
+          BucketValue(lowValue = lower, highValue = upper, count = count)
+        }
+      case _ =>
+          throw new RuntimeException("Method 'toBucketValues' is only available when using Double typed 'splits'!")
+    }
+  }
 }
 
 case class HistogramMetric(column: String, value: Try[Distribution]) extends Metric[Distribution] {

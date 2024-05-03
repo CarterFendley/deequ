@@ -61,6 +61,61 @@ class MetricsTests extends WordSpec with Matchers {
         Failure(sampleException))).toSet
       assert(metric.flatten().toSet == expected)
     }
+
+    "distribution correctly converts to bucket values" in {
+        val distribution = Distribution(
+          Map(
+            "-Infinity <= x < 3.0" -> DistributionValue(1, 0.1),
+            "3.0 <= x < 5.0" -> DistributionValue(5, 0.5),
+            "5.0 <= x <= Infinity" -> DistributionValue(4, 0.4)
+          ),
+          3,
+          splits = Some(Seq(
+            Double.NegativeInfinity,
+            3.0,
+            5.0,
+            Double.PositiveInfinity
+          ))
+        )
+
+        val expectedBucketValues = Seq(
+          BucketValue(lowValue = Double.NegativeInfinity, highValue = 3.0, count = 1),
+          BucketValue(lowValue = 3.0, highValue = 5.0, count = 5),
+          BucketValue(lowValue = 5.0, highValue = Double.PositiveInfinity, count = 4)
+        )
+
+        assert(distribution.toBucketValues == expectedBucketValues)
+    }
+  }
+
+  "KLL metric" should {
+      "bucket distribution correctly produces splits" in {
+          val bucketDist = BucketDistribution(
+            buckets = List(
+              BucketValue(lowValue = 0.0, highValue = 3.0, count = 1),
+              BucketValue(lowValue = 3.0, highValue = 5.0, count = 5),
+              BucketValue(lowValue = 5.0, highValue = 9.0, count = 4)
+            ),
+            parameters = List(), // Not important for this test
+            data = Array(Array()) // Not important for this test
+          )
+
+          val expectedSplitsBounded = Seq(
+            0.0,
+            3.0,
+            5.0,
+            9.0
+          )
+          val expectedSplitsUnbounded = Seq(
+            Double.NegativeInfinity,
+            3.0,
+            5.0,
+            Double.PositiveInfinity
+          )
+
+          assert(bucketDist.getSplits() == expectedSplitsBounded)
+          assert(bucketDist.getSplits(unboundedEdges = true) == expectedSplitsUnbounded)
+      }
   }
 
 }
